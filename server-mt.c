@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <queue>
 #include <vector>
+#include <signal.h>
 
 #define min(a, b) ((a < b) ? a : b)
 #define BUF_SIZE 30
@@ -88,22 +89,28 @@ int main(int argc, char *argv[])
      listen(sockfd,100);
      socklen_t clilen = sizeof(cli_addr);
      bool bounded = (queue_limit != 0);
+     
+     // Prevent the server to die on when client send on a closed connection
+     sigignore(SIGPIPE);
 
      while(1){
-
-        /* accept a new request, create a newsockfd */
-        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-        // if error on creating new socket, exit
-        if (newsockfd < 0) 
-            error("Error on accept");
 
         pthread_mutex_lock(&mutex);
         while(pending_requests.size() >= queue_limit  && bounded )
             pthread_cond_wait(&queue_has_space,&mutex);
-        pending_requests.push(newsockfd);
-        pthread_cond_broadcast(&queue_has_data);
+
+        /* accept a new request, create a newsockfd */
+        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+        // if error on creating new socket, exit
+        if (newsockfd < 0)
+            perror("Error on accept");
+        else {
+          pending_requests.push(newsockfd);
+          pthread_cond_broadcast(&queue_has_data);
+        }
         pthread_mutex_unlock(&mutex);
     }
+     printf("fuck\n");
     return 0; 
 }
 
@@ -123,6 +130,7 @@ void* handle_request(void *x)
       pthread_mutex_unlock(&mutex);
       handle_connection(newsockfd);
     }
+
 } 
 
 void handle_connection(const int & newsockfd)
@@ -131,24 +139,27 @@ void handle_connection(const int & newsockfd)
     char* filename = NULL;
     bzero(buffer,BUF_SIZE);
 
-    if(read(newsockfd,buffer,BUF_SIZE) < 0)
-      error("Error on Reading");
-
-    // the command passed was of form "get filename"
-    if(strncmp(buffer,"get",3) == 0){        
-        // point filename to the correct pointer
-        filename = buffer + 4;              
-        printf("File requested: %s\n",filename);
+    if(read(newsockfd,buffer,BUF_SIZE) < 0){
+      perror("Error on Reading");
     }
+    else{
 
-    // send the file to the client
-    if(filename != NULL){
+      // the command passed was of form "get filename"
+      if(strncmp(buffer,"get",3) == 0){        
+          // point filename to the correct pointer
+          filename = buffer + 4;              
+          printf("File requested: %s\n",filename);
+      }
 
-        FILE *filehandle = fopen(filename, "rb");
-        if (filehandle != NULL){
-          sendfile(newsockfd, filehandle);
-          fclose(filehandle);
-        }
+      // send the file to the client
+      if(filename != NULL){
+
+          FILE *filehandle = fopen(filename, "rb");
+          if (filehandle != NULL){
+            sendfile(newsockfd, filehandle);
+            fclose(filehandle);
+          }
+      }
     }
     //close the connect
     close(newsockfd);
