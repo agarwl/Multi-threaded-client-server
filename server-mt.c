@@ -25,11 +25,11 @@ void error(const char *msg)
     exit(1);
 }
 
-
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t queue_has_space = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t queue_has_data = PTHREAD_COND_INITIALIZER;
 static std::queue<int> pending_requests;
+static bool bounded;
 
 
 void* handle_request(void *);
@@ -86,31 +86,34 @@ int main(int argc, char *argv[])
             error("Thread not created");
      }
 
-     listen(sockfd,100);
+     listen(sockfd,5);
      socklen_t clilen = sizeof(cli_addr);
-     bool bounded = (queue_limit != 0);
+     bounded = (queue_limit != 0);
      
      // Prevent the server to die on when client send on a closed connection
-     sigignore(SIGPIPE);
+     // sigignore(SIGPIPE);
 
      while(1){
+
 
         pthread_mutex_lock(&mutex);
         while(pending_requests.size() >= queue_limit  && bounded )
             pthread_cond_wait(&queue_has_space,&mutex);
+        pthread_mutex_unlock(&mutex);
 
         /* accept a new request, create a newsockfd */
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
         // if error on creating new socket, exit
         if (newsockfd < 0)
-            perror("Error on accept");
-        else {
+            error("Error on accept");
+
+        pthread_mutex_lock(&mutex);
+        // else {
           pending_requests.push(newsockfd);
           pthread_cond_broadcast(&queue_has_data);
-        }
+        // }
         pthread_mutex_unlock(&mutex);
     }
-     printf("fuck\n");
     return 0; 
 }
 
@@ -120,13 +123,12 @@ void* handle_request(void *x)
     while(1){
 
       pthread_mutex_lock(&mutex);
-      
       while(pending_requests.empty())
         pthread_cond_wait(&queue_has_data,&mutex);
-      
       newsockfd = pending_requests.front();
       pending_requests.pop();
-      pthread_cond_signal(&queue_has_space);
+      if(bounded)
+        pthread_cond_signal(&queue_has_space);
       pthread_mutex_unlock(&mutex);
       handle_connection(newsockfd);
     }
@@ -159,6 +161,8 @@ void handle_connection(const int & newsockfd)
             sendfile(newsockfd, filehandle);
             fclose(filehandle);
           }
+          else
+            perror("File requested doesn't exist");
       }
     }
     //close the connect

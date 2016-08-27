@@ -108,7 +108,8 @@ void *connection(void *threadid)
 
     time_t start= time(NULL);
     time_t now;
-    
+
+    int printed = 0;
     while (1)
     {
         now = time(NULL);           //start timer
@@ -116,11 +117,20 @@ void *connection(void *threadid)
             break;
 
         sockfd = socket(AF_INET, SOCK_STREAM, 0); //create socket
-        if (sockfd < 0)                           //check if successfully created
+        if (sockfd < 0){                             //check if successfully created
             error("ERROR opening socket");
+        }
 
-        if (connect(sockfd,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) < 0) //connect to socket and check
-            error("ERROR connecting");
+        if (connect(sockfd,(struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0){ //connect to socket and check
+            perror("ERROR connecting to server");
+            pthread_exit(NULL);
+            // continue;
+        }
+
+        if( !printed) {
+            printf("accepted new connection %d\n", sockfd);
+            printed=1;
+        }
 
         if(strcmp(mode,"random") == 0)      //if random mode, generate random requests
             filenum = rand() % NUM_FILES;
@@ -135,7 +145,10 @@ void *connection(void *threadid)
         strcat(filename,".txt");
 
         n = write(sockfd,filename,strlen(filename)); //request server for files
-        if (n < 0) error("ERROR writing to socket");
+        if (n < 0) {
+            perror("ERROR writing to socket");
+            continue;
+        }
         now = time(NULL);
 
         int ok = read_and_discard(sockfd); //read the file 1024 bytes at a time and discard them
@@ -146,13 +159,14 @@ void *connection(void *threadid)
         }
         else
         {
-            error("File send fail");
+            perror("File send fail");
+            continue;
         }
 
+        close(sockfd);  //close socket
         sleep(sleeptime); //sleep after download
-        close(sockfd);    //close socket
     }
-    
+   
     return 0;
 }
 
